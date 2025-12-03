@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>BiasRadar</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #0f172a;
+      color: #e5e7eb;
+    }
+    h1 { margin-bottom: 4px; }
+    .subtitle {
+      color: #9ca3af;
+      font-size: 0.9rem;
+      margin-bottom: 16px;
+    }
+    .card {
+      background: #020617;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+      border: 1px solid #1f2937;
+    }
+    label {
+      font-size: 0.9rem;
+      color: #9ca3af;
+      display: block;
+      margin-bottom: 4px;
+    }
+    input, select, button {
+      font-family: inherit;
+      font-size: 0.95rem;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid #374151;
+      background: #020617;
+      color: #e5e7eb;
+      outline: none;
+      box-sizing: border-box;
+    }
+    input:focus, select:focus { border-color: #3b82f6; }
+    button {
+      cursor: pointer;
+      background: #3b82f6;
+      border: none;
+      font-weight: 500;
+      padding: 9px 14px;
+    }
+    button:hover { background: #2563eb; }
+    .row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+    .field {
+      flex: 1 1 180px;
+      min-width: 160px;
+    }
+    #status {
+      font-size: 0.9rem;
+      margin-top: 8px;
+      color: #9ca3af;
+    }
+    #chart-container {
+      position: relative;
+      height: 420px;
+      margin-top: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+      margin-top: 8px;
+    }
+    th, td {
+      text-align: left;
+      padding: 6px 8px;
+      border-bottom: 1px solid #111827;
+    }
+    th {
+      background: #020617;
+      position: sticky;
+      top: 0;
+    }
+    tr:nth-child(even) { background: #020617; }
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      background: #111827;
+      border: 1px solid #1f2937;
+      text-transform: capitalize;
+    }
+  </style>
+</head>
+<body>
+  <h1>BiasRadar</h1>
+  <div class="subtitle">
+    Compare how different news outlets cover the same topic using sentiment, subjectivity, and emotion intensity.
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div class="field">
+        <label for="topic">Topic / keyword</label>
+        <input id="topic" placeholder="e.g. AI regulation, Budget 2025, Ukraine" />
+      </div>
+      <div class="field" style="max-width: 140px;">
+        <label for="language">Language</label>
+        <select id="language">
+          <option value="en">English</option>
+          <option value="hi">Hindi</option>
+          <option value="es">Spanish</option>
+          <option value="fr">French</option>
+        </select>
+      </div>
+      <div class="field" style="max-width: 140px;">
+        <label for="pageSize">Max articles</label>
+        <input id="pageSize" type="number" min="5" max="100" value="40" />
+      </div>
+      <div>
+        <button id="analyzeBtn">Analyze bias</button>
+      </div>
+    </div>
+    <div id="status"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top: 0; font-size: 1rem;">Bias overview</h2>
+    <div id="chartTopic" style="font-size: 0.9rem; color: #9ca3af; margin-bottom: 4px;"></div>
+    <div id="chart-container">
+      <canvas id="radarChart"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top: 0; font-size: 1rem;">Source details</h2>
+    <div style="overflow-x:auto; max-height: 300px;">
+      <table>
+        <thead>
+        <tr>
+          <th>Source</th>
+          <th>Lean</th>
+          <th>Articles</th>
+          <th>Sentiment</th>
+          <th>Subjectivity</th>
+          <th>Dominant emotion</th>
+          <th>Emotion intensity</th>
+        </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = "http://localhost:8000";
+    const analyzeBtn = document.getElementById("analyzeBtn");
+    const topicInput = document.getElementById("topic");
+    const langSelect = document.getElementById("language");
+    const pageSizeInput = document.getElementById("pageSize");
+    const statusEl = document.getElementById("status");
+    const chartTopicEl = document.getElementById("chartTopic");
+    const tableBody = document.getElementById("tableBody");
+
+    let radarChart = null;
+
+    function setStatus(msg, isError = false) {
+      statusEl.textContent = msg || "";
+      statusEl.style.color = isError ? "#f97373" : "#9ca3af";
+    }
+
+    function randomColor(alpha = 0.4) {
+      const r = Math.floor(80 + Math.random() * 150);
+      const g = Math.floor(80 + Math.random() * 150);
+      const b = Math.floor(80 + Math.random() * 150);
+      return {
+        border: `rgba(${r},${g},${b},1)`,
+        background: `rgba(${r},${g},${b},${alpha})`
+      };
+    }
+
+    function renderChart(topic, sources) {
+      const canvas = document.getElementById("radarChart");
+      const ctx = canvas.getContext("2d");
+
+      if (radarChart) {
+        radarChart.destroy();
+        radarChart = null;
+      }
+
+      if (!sources.length) {
+        chartTopicEl.textContent = "No sources found for this topic.";
+        return;
+      }
+
+      chartTopicEl.textContent = `Topic: "${topic}" · Sources: ${sources.length}`;
+
+      const labels = ["Sentiment (0–1)", "Subjectivity (0–1)", "Emotion intensity (0–1)"];
+
+      const datasets = sources.map(src => {
+        const normSent = (src.avg_sentiment + 1) / 2; // -1..1 → 0..1
+        const subj = Math.min(Math.max(src.avg_subjectivity, 0), 1);
+        const emoInt = Math.min(Math.max(src.emotion_intensity, 0), 1);
+
+        const c = randomColor();
+        return {
+          label: src.name,
+          data: [normSent, subj, emoInt],
+          borderColor: c.border,
+          backgroundColor: c.background,
+          borderWidth: 2,
+          pointRadius: 3
+        };
+      });
+
+      radarChart = new Chart(ctx, {
+        type: "radar",
+        data: {
+          labels,
+          datasets
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            r: {
+              beginAtZero: true,
+              min: 0,
+              max: 1,
+              ticks: {
+                stepSize: 0.25,
+                color: "#6b7280"
+              },
+              grid: {
+                color: "#1f2937"
+              },
+              angleLines: {
+                color: "#1f2937"
+              },
+              pointLabels: {
+                color: "#9ca3af"
+              }
+            }
+          },
+          plugins: {
+            legend: {
+              labels: {
+                color: "#e5e7eb"
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function renderTable(sources) {
+      tableBody.innerHTML = "";
+      if (!sources.length) return;
+
+      for (const src of sources) {
+        const tr = document.createElement("tr");
+
+        const leanColor = {
+          "left": "#a855f7",
+          "center-left": "#22c55e",
+          "center": "#3b82f6",
+          "right": "#f97316",
+          "unknown": "#6b7280"
+        }[src.political_lean] || "#6b7280";
+
+        tr.innerHTML = `
+          <td>${src.name}</td>
+          <td><span class="tag" style="border-color:${leanColor}; color:${leanColor};">
+            ${src.political_lean}
+          </span></td>
+          <td>${src.article_count}</td>
+          <td>${src.avg_sentiment.toFixed(2)}</td>
+          <td>${src.avg_subjectivity.toFixed(2)}</td>
+          <td>${src.dominant_emotion}</td>
+          <td>${src.emotion_intensity.toFixed(2)}</td>
+        `;
+        tableBody.appendChild(tr);
+      }
+    }
+
+    async function analyze() {
+      const topic = topicInput.value.trim();
+      const language = langSelect.value;
+      const pageSize = parseInt(pageSizeInput.value || "40", 10);
+
+      if (!topic) {
+        setStatus("Enter a topic first.", true);
+        return;
+      }
+
+      setStatus("Analyzing…");
+      analyzeBtn.disabled = true;
+
+      try {
+        const res = await fetch(`${API_BASE}/api/analyze`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ topic, language, page_size: pageSize })
+        });
+
+        if (!res.ok) {
+          let detail = `HTTP ${res.status}`;
+          try {
+            const err = await res.json();
+            if (err.detail) detail = err.detail;
+          } catch {}
+          throw new Error(detail);
+        }
+
+        const data = await res.json();
+        const sources = data.sources || [];
+
+        if (!sources.length) {
+          setStatus("No articles found. Try another topic or language.");
+        } else {
+          setStatus(`Found ${sources.length} sources. Hover legend to inspect each outlet.`);
+        }
+
+        renderChart(data.topic, sources);
+        renderTable(sources);
+      } catch (e) {
+        console.error(e);
+        setStatus(`Error: ${e.message}`, true);
+        renderChart("", []);
+        renderTable([]);
+      } finally {
+        analyzeBtn.disabled = false;
+      }
+    }
+
+    analyzeBtn.addEventListener("click", analyze);
+    topicInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") analyze();
+    });
+  </script>
+</body>
+</html>
