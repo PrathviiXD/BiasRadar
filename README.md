@@ -8,7 +8,7 @@ This project is built to help people quickly understand **media bias** and how d
 
 ## 🚀 Live Demo  
 Frontend (Netlify): https://biasradar.netlify.app/  
-Backend API (Render): https://news-app-6-5d84.onrender.com
+Backend API (Render): https://news-app-6-5d84.onrender.com/docs
 
 ---
 
